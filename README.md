@@ -1,8 +1,8 @@
-# Ubinkaze
+# Config Ubuntu Server 22.04+
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-Ubinkaze (U-bin-ka-zeh) - "Ubuntu" + "Kaze" (🌀, wind in Japanese).
+Inspirado no Ubinkaze (U-bin-ka-zeh) - "Ubuntu" + "Kaze" (🌀, wind in Japanese) do @felipefontoura.
 
 An comprehensive post-installation configuration tool for Ubuntu servers, streamlining the setup process and implementing best practices.
 
@@ -24,7 +24,7 @@ An comprehensive post-installation configuration tool for Ubuntu servers, stream
 Run the setup script on your server:
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/felipefontoura/ubinkaze/stable/boot.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/brunopirz/configubuntu/stable/boot.sh)
 ```
 
 ## 🐋 Docker Swarm
@@ -58,12 +58,13 @@ Ubinkaze is released under the [MIT License](https://opensource.org/licenses/MIT
 
 ## 📫 Contact
 
-- Project Link: [https://github.com/felipefontoura/ubinkaze](https://github.com/felipefontoura/ubinkaze)
-- Issue Tracker: [GitHub Issues](https://github.com/felipefontoura/ubinkaze/issues)
+- Project Link: [https://github.com/brunopirz/configubuntu](https://github.com/brunopirz/configubuntu)
+- Issue Tracker: [GitHub Issues](https://github.com/brunopirz/configubuntu)
 
 ## 🙏 Acknowledgments
 
 - [@rameerez](https://github.com/rameerez)
+- [@felipefontoura](https://github.com/felipefontoura) 
 - [Omakub](https://omakub.org/)
 - Contributors and maintainers
 - Open source community
