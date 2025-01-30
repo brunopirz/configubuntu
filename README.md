@@ -22,7 +22,7 @@ Uma ferramenta de configuração pós-instalação para servidores Ubuntu, simpl
 Execute o script de configuração no seu servidor:
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/brunopirz/configubuntu/stable/boot.sh)
+bash <(curl -sSL [https://raw.githubusercontent.com/brunopirz/configubuntu/stable/boot.sh](https://raw.githubusercontent.com/brunopirz/configubuntu/refs/heads/main/boot.sh)
 ```
 
 ## 🐋 Docker Swarm
