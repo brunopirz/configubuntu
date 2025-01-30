@@ -2,26 +2,24 @@
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-Inspirado no Ubinkaze (U-bin-ka-zeh) - "Ubuntu" + "Kaze" (🌀, wind in Japanese) do @felipefontoura.
+Uma ferramenta de configuração pós-instalação para servidores Ubuntu, simplificando o processo de configuração e implementando as melhores práticas de segurança.
 
-An comprehensive post-installation configuration tool for Ubuntu servers, streamlining the setup process and implementing best practices.
+## 🚀 Funcionalidades
 
-## 🚀 Features
+- Configuração automatizada pós-instalação
+- Configurações de segurança aprimoradas
+- Configuração de softwares comuns para servidor
+- Otimizações de desempenho
 
-- Automated post-installation configuration
-- Security hardening settings
-- Common server software setup
-- Performance optimizations
+## 📋 Requisitos
 
-## 📋 Prerequisites
+- Ubuntu Server (22.04)
+- Acesso root ou sudo
+- Conhecimentos básicos de linha de comando
 
-- Ubuntu Server (20.04)
-- Root or sudo access
-- Basic command line knowledge
+## 💡 Uso
 
-## 💡 Usage
-
-Run the setup script on your server:
+Execute o script de configuração no seu servidor:
 
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/brunopirz/configubuntu/stable/boot.sh)
@@ -29,42 +27,44 @@ bash <(curl -sSL https://raw.githubusercontent.com/brunopirz/configubuntu/stable
 
 ## 🐋 Docker Swarm
 
-If you need to use Docker Swarm run:
+Se você precisar usar o Docker Swarm, execute:
 
 ```bash
-docker swarm init --advertise-addr="<public ip>"
+docker swarm init --advertise-addr="<ip público>"
 docker network create --driver=overlay network_public
 ```
 
-## 🤝 Contributing
+## 🤝 Contribua
 
-We welcome contributions to Ubinkaze! Here's how you can help:
+Aceitamos contribuições! Veja como você pode ajudar:
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+1. Faça um fork do repositório
+2. Crie sua branch de funcionalidade (`git checkout -b feature/AmazingFeature`)
+3. Faça o commit das suas alterações (`git commit -m 'Adicionar uma AmazingFeature'`)
+4. Envie para a branch (`git push origin feature/AmazingFeature`)
+5. Abra um Pull Request
 
-For documentation improvements:
+Para melhorias na documentação:
 
-- Ensure clear and concise explanations
-- Include examples where appropriate
-- Follow the existing documentation structure
+- Garanta explicações claras e concisas
+- Inclua exemplos onde apropriado
+- Siga a estrutura existente da documentação
 
-## 📝 License
+## 📝 Licença
 
-Ubinkaze is released under the [MIT License](https://opensource.org/licenses/MIT).
+O Config Ubuntu é liberado sob a [Licença MIT](https://opensource.org/licenses/MIT).
 
-## 📫 Contact
+## 📫 Contato
 
-- Project Link: [https://github.com/brunopirz/configubuntu](https://github.com/brunopirz/configubuntu)
-- Issue Tracker: [GitHub Issues](https://github.com/brunopirz/configubuntu)
+- Link do Projeto: [https://github.com/brunopirz/configubuntu](https://github.com/brunopirz/configubuntu)
+- Rastreador de Issues: [GitHub Issues](https://github.com/brunopirz/configubuntu)
 
-## 🙏 Acknowledgments
+## 🙏 Agradecimentos
+
+Inspirado no Ubinkaze (U-bin-ka-zeh) - "Ubuntu" + "Kaze" (🌀, vento em japonês) do @felipefontoura.
 
 - [@rameerez](https://github.com/rameerez)
-- [@felipefontoura](https://github.com/felipefontoura) 
+- [@felipefontoura](https://github.com/felipefontoura)
 - [Omakub](https://omakub.org/)
-- Contributors and maintainers
-- Open source community
+- Contribuidores e mantenedores
+- Comunidade de código aberto
