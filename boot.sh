@@ -2,31 +2,45 @@
 
 set -euo pipefail
 
-banner='▗▖ ▗▖▗▄▄▖ ▗▄▄▄▖▗▖  ▗▖▗▖ ▗▖ ▗▄▖ ▗▄▄▄▄▖▗▄▄▄▖
-▐▌ ▐▌▐▌ ▐▌  █  ▐▛▚▖▐▌▐▌▗▞▘▐▌ ▐▌   ▗▞▘▐▌   
-▐▌ ▐▌▐▛▀▚▖  █  ▐▌ ▝▜▌▐▛▚▖ ▐▛▀▜▌ ▗▞▘  ▐▛▀▀▘
-▝▚▄▞▘▐▙▄▞▘▗▄█▄▖▐▌  ▐▌▐▌ ▐▌▐▌ ▐▌▐▙▄▄▄▖▐▙▄▄▖
-
-'
+banner='▗   █████████                         ██████   ███                 
+  ███░░░░░███                       ███░░███ ░░░                  
+ ███     ░░░   ██████  ████████    ░███ ░░░  ████   ███████       
+░███          ███░░███░░███░░███  ███████   ░░███  ███░░███       
+░███         ░███ ░███ ░███ ░███ ░░░███░     ░███ ░███ ░███       
+░░███     ███░███ ░███ ░███ ░███   ░███      ░███ ░███ ░███       
+ ░░█████████ ░░██████  ████ █████  █████     █████░░███████       
+  ░░░░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░     ░░░░░  ░░░░░███       
+                                                   ███ ░███       
+                                                  ░░██████        
+                                                   ░░░░░░         
+ █████  █████ █████                            █████              
+░░███  ░░███ ░░███                            ░░███               
+ ░███   ░███  ░███████  █████ ████ ████████   ███████   █████ ████
+ ░███   ░███  ░███░░███░░███ ░███ ░░███░░███ ░░░███░   ░░███ ░███ 
+ ░███   ░███  ░███ ░███ ░███ ░███  ░███ ░███   ░███     ░███ ░███ 
+ ░███   ░███  ░███ ░███ ░███ ░███  ░███ ░███   ░███ ███ ░███ ░███ 
+ ░░████████   ████████  ░░████████ ████ █████  ░░█████  ░░████████
+  ░░░░░░░░   ░░░░░░░░    ░░░░░░░░ ░░░░ ░░░░░    ░░░░░    ░░░░░░░░
+  '
 
 echo -e "$banner"
-echo "=> Ubinkaze is for fresh Ubuntu Server 24.04 installations only!"
+echo "=> Configure rapidamente seu Ubuntu Server 22.04 ou superior"
 echo -e "\nBegin installation (or abort with ctrl+c)..."
 
 sudo apt-get update >/dev/null
 sudo apt-get install -y git >/dev/null
 
-echo "Cloning Ubinkaze..."
-rm -rf ~/.local/share/ubinkaze
-git clone https://github.com/felipefontoura/ubinkaze.git ~/.local/share/ubinkaze >/dev/null
+echo "clonando direrório..."
+rm -rf ~/.local/share/configubuntu
+git clone https://github.com/brunopirz/configubuntu.git ~/.local/share/configubuntu >/dev/null
 
-UBINKAZE_REF=${UBINKAZE_REF:-"stable"}
+CONFIGUBUNTU_REF=${CONFIGUBUNTU_REF:-"stable"}
 
-if [[ $UBINKAZE_REF != "main" ]]; then
-  cd ~/.local/share/ubinkaze
-  git fetch origin "$UBINKAZE_REF" && git checkout "$UBINKAZE_REF"
+if [[ $CONFIGUBUNTU_REF != "main" ]]; then
+  cd ~/.local/share/configubuntu
+  git fetch origin "$CONFIGUBUNTU_REF" && git checkout "$CONFIGUBUNTU_REF"
   cd - >/dev/null
 fi
 
-echo "Installation starting..."
-source ~/.local/share/ubinkaze/install.sh
+echo "Inicializando a instalação do Config Ubuntu..."
+source ~/.local/share/configubuntu/install.sh
