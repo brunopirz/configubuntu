@@ -24,15 +24,19 @@ Execute o script de configuração no seu servidor:
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/brunopirz/configubuntu/refs/heads/main/boot.sh)
 ```
+Após a instalação a conexão será feita com o usuário: docker
 
-## 🐋 Docker Swarm
+ex: docker@ip:senha_original
 
-Se você precisar usar o Docker Swarm, execute:
+## 🐋 Criando o Docker Swarm
+
+Execute os seguintes comandos:
 
 ```bash
-docker swarm init --advertise-addr="<ip público>"
+docker swarm init --advertise-addr="<ip público da sua vps>"
 docker network create --driver=overlay network_public
 ```
+PS: Pode substituir o "network_public" pelo nome da rede q preferir
 
 ## 🤝 Contribua
 
