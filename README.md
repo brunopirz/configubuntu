@@ -1,4 +1,4 @@
-# Config Ubuntu Server 22.04+
+# Config Ubuntu Server 24.04+
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
@@ -13,7 +13,7 @@ Uma ferramenta de configuração pós-instalação para servidores Ubuntu, simpl
 
 ## 📋 Requisitos
 
-- Ubuntu Server (22.04)
+- Ubuntu Server (24.04)
 - Acesso root ou sudo
 - Conhecimentos básicos de linha de comando
 
