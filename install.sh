@@ -8,7 +8,7 @@ IFS=$'\n\t'
 
 # --- Constants ---
 REQUIRED_OS="Ubuntu"
-REQUIRED_VERSION="22.04"
+REQUIRED_VERSION="24.04"
 MIN_RAM_MB=1024
 MIN_DISK_GB=20
 
