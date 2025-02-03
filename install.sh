@@ -9,8 +9,8 @@ IFS=$'\n\t'
 # --- Constants ---
 REQUIRED_OS="Ubuntu"
 REQUIRED_VERSION="24.04"
-MIN_RAM_MB=1024
-MIN_DISK_GB=20
+MIN_RAM_MB=900
+MIN_DISK_GB=5
 
 # --- Aesthetics ---
 GREEN='\033[0;32m'
