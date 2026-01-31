@@ -1,8 +1,6 @@
 # Guia de Hardening para VPS Compartilhada
 
-## 🎯 Recomendação para Seu Caso
-
-### **MELHOR OPÇÃO: Playbook Ansible Otimizado (hardening-vps-shared.yml)**
+## **MELHOR OPÇÃO: Playbook Ansible Otimizado (hardening-vps-shared.yml)**
 
 **Por quê?**
 - ✅ **Leve:** Não sobrecarrega VPS compartilhada
