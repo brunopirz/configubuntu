@@ -23,7 +23,7 @@
 ssh root@seu-servidor
 
 # 2. Baixar script
-wget https://raw.githubusercontent.com/SEU-REPO/vps-hardening-lite.sh
+wget https://raw.githubusercontent.com/brunopirz/configubuntu/blob/main/shared/vpslite.sh
 chmod +x vps-hardening-lite.sh
 
 # 3. Executar
