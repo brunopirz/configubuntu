@@ -215,15 +215,29 @@ fi
 # Usuário docker
 # =========================
 log "Configurando usuário docker..."
+
+# Desabilitar exit on error temporariamente
+set +e
+
 if ! id docker &>/dev/null; then
-  adduser --disabled-password --gecos "" docker
-  ok "Usuário docker criado"
+  # Tentar criar usuário
+  adduser --disabled-password --gecos "" docker >/dev/null 2>&1
+  
+  # Verificar se foi criado
+  if id docker &>/dev/null; then
+    ok "Usuário docker criado"
+  else
+    die "Falha ao criar usuário docker"
+  fi
 else
   ok "Usuário docker já existe"
 fi
 
-# Adicionar ao grupo docker (ignora se já estiver)
-usermod -aG docker docker 2>/dev/null || true
+# Adicionar ao grupo docker
+usermod -aG docker docker 2>/dev/null
+
+# Reabilitar exit on error
+set -e
 
 # Setup SSH directory
 mkdir -p /home/docker/.ssh
