@@ -3,547 +3,421 @@
 # Production Docker Host Hardening Script (based on https://gist.github.com/rameerez/238927b78f9108a71a77aed34208de11)
 # For Ubuntu Server 22.04 LTS (Noble)
 
+#!/bin/bash
 set -euo pipefail
 IFS=$'\n\t'
 
-# --- Constants ---
-REQUIRED_OS="Ubuntu"
-REQUIRED_VERSION="24.04"
+# =========================
+# Configurações básicas
+# =========================
+MIN_UBUNTU_VERSION="22.04"
 MIN_RAM_MB=900
 MIN_DISK_GB=5
 
-# --- Aesthetics ---
+# =========================
+# UI
+# =========================
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
-ICON='\xF0\x9F\x8C\x80'
 NC='\033[0m'
 
-# --- Functions ---
-print_message() {
-  local color=$1
-  local message=$2
-  echo -e "${color}${ICON} ${message}${NC}"
-}
+log() { echo -e "${YELLOW}▶ $1${NC}"; }
+ok()  { echo -e "${GREEN}✔ $1${NC}"; }
+die() { echo -e "${RED}✖ $1${NC}"; exit 1; }
 
-print_error() {
-  print_message "${RED}" "ERROR: $1"
-}
+trap 'die "Erro na linha $LINENO"' ERR
 
-print_warning() {
-  print_message "${YELLOW}" "WARNING: $1"
-}
+# =========================
+# Pré-checks
+# =========================
+log "Validando ambiente..."
 
-print_success() {
-  print_message "${GREEN}" "SUCCESS: $1"
-}
+[[ $EUID -eq 0 ]] || die "Execute como root"
 
-check_root() {
-  if [[ $EUID -ne 0 ]]; then
-    print_error "This script must be run as root"
-    exit 1
-  fi
-}
+command -v lsb_release >/dev/null || die "lsb_release não encontrado"
 
-check_os() {
-  if ! command -v lsb_release >/dev/null 2>&1; then
-    print_error "lsb_release command not found. Is this Ubuntu?"
-    exit 1
-  fi
+UBUNTU_VERSION=$(lsb_release -rs)
 
-  local os_name=$(lsb_release -is)
-  local os_version=$(lsb_release -rs)
+dpkg --compare-versions "$UBUNTU_VERSION" ge "$MIN_UBUNTU_VERSION" \
+  || die "Ubuntu $MIN_UBUNTU_VERSION ou superior é necessário (encontrado: $UBUNTU_VERSION)"
 
-  if [[ "$os_name" != "$REQUIRED_OS" ]]; then
-    print_error "This script requires $REQUIRED_OS (found $os_name)"
-    exit 1
-  fi
+RAM=$(free -m | awk '/^Mem:/{print $2}')
+DISK=$(df -BG / | awk 'NR==2{gsub("G","");print $4}')
 
-  if [[ "$os_version" != "$REQUIRED_VERSION" ]]; then
-    print_error "This script requires Ubuntu $REQUIRED_VERSION (found $os_version)"
-    exit 1
-  fi
-}
+(( RAM >= MIN_RAM_MB )) || die "RAM insuficiente: ${RAM}MB (mínimo: ${MIN_RAM_MB}MB)"
+(( DISK >= MIN_DISK_GB )) || die "Disco insuficiente: ${DISK}GB (mínimo: ${MIN_DISK_GB}GB)"
 
-check_resources() {
-  local total_ram_mb=$(free -m | awk '/^Mem:/{print $2}')
-  local total_disk_gb=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
+ok "Sistema compatível (Ubuntu $UBUNTU_VERSION, ${RAM}MB RAM, ${DISK}GB disco)"
 
-  if ((total_ram_mb < MIN_RAM_MB)); then
-    print_error "Insufficient RAM. Required: ${MIN_RAM_MB}MB, Found: ${total_ram_mb}MB"
-    exit 1
-  fi
-
-  if ((total_disk_gb < MIN_DISK_GB)); then
-    print_error "Insufficient disk space. Required: ${MIN_DISK_GB}GB, Found: ${total_disk_gb}GB"
-    exit 1
-  fi
-}
-
-verify_security_settings() {
-  local failed=0
-
-  # Check kernel parameters
-  local params=(
-    "kernel.unprivileged_bpf_disabled=1"
-    "net.ipv4.conf.all.log_martians=0"
-    "net.ipv4.ip_forward=1"
-    "fs.protected_hardlinks=1"
-    "fs.protected_symlinks=1"
-  )
-
-  for param in "${params[@]}"; do
-    local name=${param%=*}
-    local expected=${param#*=}
-    local actual=$(sysctl -n "$name" 2>/dev/null || echo "NOT_FOUND")
-
-    if [[ "$actual" != "$expected" ]]; then
-      print_error "Kernel parameter $name = $actual (expected $expected)"
-      failed=1
-    fi
-  done
-
-  # Check Docker settings
-  if ! docker info 2>/dev/null | grep -q "Cgroup Driver: systemd"; then
-    print_error "Docker is not using systemd cgroup driver"
-    failed=1
-  fi
-
-  if [[ "$(stat -c %a /var/run/docker.sock)" != "660" ]]; then
-    print_error "Docker socket has incorrect permissions"
-    failed=1
-  fi
-
-  # Check services
-  local services=(
-    "docker"
-    "fail2ban"
-    "ufw"
-    "auditd"
-    "chrony"
-  )
-
-  for service in "${services[@]}"; do
-    if ! systemctl is-active --quiet "$service"; then
-      print_error "Service $service is not running"
-      failed=1
-    fi
-  done
-
-  # Check AIDE database
-  if [ ! -f /var/lib/aide/aide.db ]; then
-    print_error "AIDE database not initialized"
-    failed=1
-  fi
-
-  # Check Chrony sync
-  if ! chronyc tracking &>/dev/null; then
-    print_error "Chrony is not syncing time"
-    failed=1
-  fi
-
-  # Additional security checks
-  if ! ufw status | grep -q "Status: active"; then
-    print_error "UFW firewall is not active"
-    failed=1
-  fi
-
-  if ! grep -q "PasswordAuthentication no" /etc/ssh/sshd_config; then
-    print_error "SSH password authentication is not disabled"
-    failed=1
-  fi
-
-  if ! apparmor_status | grep -q "apparmor module is loaded."; then
-    print_error "AppArmor is not loaded"
-    failed=1
-  fi
-
-  return $failed
-}
-
-handle_error() {
-  local line_number=$1
-  print_error "Script failed on line ${line_number}"
-  print_error "Please check the logs above for more information"
-  exit 1
-}
-
-# Set up error handling
-trap 'handle_error ${LINENO}' ERR
-
-# --- Pre-flight Checks ---
-print_message "${YELLOW}" "Performing pre-flight checks..."
-check_root
-check_os
-check_resources
-
-# --- System Updates ---
-print_message "${YELLOW}" "Updating system packages..."
+# =========================
+# Atualização do sistema
+# =========================
+log "Atualizando pacotes..."
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
 
-# --- Essential Packages ---
-print_message "${YELLOW}" "Installing essential packages..."
-DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  ufw \
-  fail2ban \
-  curl \
-  wget \
-  gnupg \
-  lsb-release \
-  ca-certificates \
-  apt-transport-https \
-  software-properties-common \
-  sysstat \
-  auditd \
-  audispd-plugins \
-  unattended-upgrades \
-  acl \
-  apparmor \
-  apparmor-utils \
-  aide \
-  rkhunter \
-  logwatch \
-  git \
-  python3-pyinotify
+# =========================
+# Pacotes essenciais
+# =========================
+log "Instalando pacotes essenciais..."
+apt-get install -y \
+  ufw fail2ban curl wget gnupg ca-certificates \
+  software-properties-common sysstat auditd \
+  audispd-plugins unattended-upgrades acl \
+  apparmor apparmor-utils aide aide-common logwatch \
+  git chrony
 
-# --- Time Synchronization ---
-print_message "${YELLOW}" "Configuring time synchronization..."
-systemctl stop systemd-timesyncd || true
-systemctl disable systemd-timesyncd || true
-apt-get remove -y systemd-timesyncd || true
-DEBIAN_FRONTEND=noninteractive apt-get install -y chrony
-if systemctl -q is-enabled systemd-timesyncd 2>/dev/null; then
-  systemctl disable systemd-timesyncd
-  systemctl stop systemd-timesyncd
+# =========================
+# Sincronização de tempo
+# =========================
+log "Configurando horário (chrony)..."
+systemctl disable systemd-timesyncd --now 2>/dev/null || true
+systemctl enable chrony --now
+
+# Verificar se chrony está funcionando
+sleep 2
+if chronyc tracking &>/dev/null; then
+  ok "Chrony sincronizando"
+else
+  log "AVISO: Chrony pode não estar sincronizando corretamente"
 fi
-systemctl enable chrony.service || true # use .service to avoid alias issues
-systemctl start chrony.service
-# --- System Hardening ---
-print_message "${YELLOW}" "Configuring system security..."
 
-# Configure AppArmor
-systemctl enable apparmor
-systemctl start apparmor
+# =========================
+# Hardening de Kernel
+# =========================
+log "Aplicando hardening de kernel..."
+cat >/etc/sysctl.d/99-hardening.conf <<'EOF'
+# Randomização de memória
+kernel.randomize_va_space=2
+kernel.kptr_restrict=2
+kernel.dmesg_restrict=1
+kernel.perf_event_paranoid=3
+kernel.unprivileged_bpf_disabled=1
 
-# Initialize AIDE
-aide --config=/etc/aide/aide.conf --init
-mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+# Proteção de sistema de arquivos
+fs.protected_hardlinks=1
+fs.protected_symlinks=1
+fs.suid_dumpable=0
 
-# Configure kernel parameters
-cat <<EOF >/etc/sysctl.d/99-security.conf
-# Network security
-net.ipv4.conf.all.send_redirects = 0
-net.ipv4.conf.default.send_redirects = 0
-net.ipv4.conf.all.accept_redirects = 0
-net.ipv4.conf.default.accept_redirects = 0
-net.ipv4.conf.all.rp_filter = 1
-net.ipv4.conf.default.rp_filter = 1
-net.ipv4.icmp_echo_ignore_broadcasts = 1
-net.ipv4.icmp_ignore_bogus_error_responses = 1
-net.ipv4.conf.all.accept_source_route = 0
-net.ipv4.conf.default.accept_source_route = 0
-net.ipv6.conf.all.accept_source_route = 0
-net.ipv6.conf.default.accept_source_route = 0
-net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_max_syn_backlog = 2048
-net.ipv4.tcp_synack_retries = 2
-net.ipv4.tcp_syn_retries = 5
+# Rede - Docker precisa de IP forwarding
+net.ipv4.ip_forward=1
+net.ipv4.conf.all.send_redirects=0
+net.ipv4.conf.default.send_redirects=0
+net.ipv4.conf.all.accept_redirects=0
+net.ipv4.conf.default.accept_redirects=0
+net.ipv4.conf.all.accept_source_route=0
+net.ipv4.conf.default.accept_source_route=0
 
-# Docker needs IPv4 forwarding
-net.ipv4.ip_forward = 1
+# IMPORTANTE: log_martians=0 para evitar spam de logs com Docker
+# Docker usa NAT e vai gerar milhares de mensagens "martian source"
+net.ipv4.conf.all.log_martians=0
+net.ipv4.conf.default.log_martians=0
 
-# System limits
-fs.file-max = 1048576
-kernel.pid_max = 65536
-net.ipv4.ip_local_port_range = 1024 65000
-net.ipv4.tcp_tw_reuse = 1
-vm.max_map_count = 262144
-kernel.kptr_restrict = 2
-kernel.dmesg_restrict = 1
-kernel.perf_event_paranoid = 3
-kernel.unprivileged_bpf_disabled = 1
-net.core.bpf_jit_harden = 2
-kernel.yama.ptrace_scope = 2
+net.ipv4.tcp_syncookies=1
+net.ipv4.icmp_echo_ignore_broadcasts=1
+net.ipv4.icmp_ignore_bogus_error_responses=1
 
-# File system hardening
-fs.protected_hardlinks = 1
-fs.protected_symlinks = 1
-fs.suid_dumpable = 0
+# IPv6
+net.ipv6.conf.all.accept_ra=0
+net.ipv6.conf.default.accept_ra=0
+net.ipv6.conf.all.accept_source_route=0
+net.ipv6.conf.default.accept_source_route=0
 
-# Additional network hardening
-net.ipv4.conf.all.log_martians = 0
-net.ipv4.conf.default.log_martians = 0
-net.ipv6.conf.all.accept_ra = 0
-net.ipv6.conf.default.accept_ra = 0
+# Limites
+fs.file-max=1048576
+kernel.pid_max=65536
 EOF
 
-sysctl -p /etc/sysctl.d/99-security.conf
-sysctl --system # This loads all configs including the new one
+sysctl --system >/dev/null
+ok "Parâmetros de kernel aplicados"
 
-# Configure system limits
-cat <<EOF >/etc/security/limits.d/docker.conf
-*       soft    nproc     10000
-*       hard    nproc     10000
-*       soft    nofile    1048576
-*       hard    nofile    1048576
-*       soft    core      0
-*       hard    core      0
-*       soft    stack     8192
-*       hard    stack     8192
-EOF
+# =========================
+# AppArmor
+# =========================
+log "Ativando AppArmor..."
+systemctl enable apparmor --now
+ok "AppArmor ativo"
 
-# --- Docker Installation ---
-print_message "${YELLOW}" "Installing Docker..."
-curl -fsSL https://get.docker.com -o get-docker.sh
-sh get-docker.sh
-rm get-docker.sh
+# =========================
+# AIDE
+# =========================
+log "Inicializando AIDE (pode demorar vários minutos)..."
+if aide --init 2>&1 | grep -q "AIDE initialized"; then
+  if [ -f /var/lib/aide/aide.db.new ]; then
+    mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+    ok "AIDE inicializado"
+  else
+    log "AVISO: AIDE pode não ter criado o database corretamente"
+  fi
+else
+  log "AVISO: AIDE pode ter falhado na inicialização"
+fi
 
-# --- Docker Configuration ---
-print_message "${YELLOW}" "Configuring Docker..."
+# =========================
+# Docker
+# =========================
+log "Instalando Docker..."
+curl -fsSL https://get.docker.com | sh
+systemctl enable docker --now
+
+log "Configurando Docker..."
 mkdir -p /etc/docker
-cat <<EOF >/etc/docker/daemon.json
+cat >/etc/docker/daemon.json <<'EOF'
 {
-    "log-driver": "json-file",
-    "log-opts": {
-        "max-size": "10m",
-        "max-file": "3"
-    },
-    "icc": true,
-    "live-restore": false,
-    "userland-proxy": false,
-    "no-new-privileges": true,
-    "default-ulimits": {
-        "nofile": {
-            "Name": "nofile",
-            "Hard": 64000,
-            "Soft": 64000
-        }
-    },
-    "features": {
-        "buildkit": true
-    },
-    "experimental": false,
-    "default-runtime": "runc",
-    "storage-driver": "overlay2",
-    "metrics-addr": "127.0.0.1:9323",
-    "builder": {
-        "gc": {
-            "enabled": true,
-            "defaultKeepStorage": "20GB"
-        }
-    }
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  },
+  "userland-proxy": false,
+  "no-new-privileges": true,
+  "iptables": true,
+  "storage-driver": "overlay2",
+  "features": { "buildkit": true }
 }
 EOF
 
-# After Docker daemon.json configuration
-print_message "${YELLOW}" "Testing Docker configuration..."
-if ! docker info &>/dev/null; then
-  print_error "Docker failed to start. Checking configuration..."
-  journalctl -u docker.service --no-pager | tail -n 50
-  exit 1
+systemctl daemon-reload
+systemctl restart docker || die "Docker falhou ao reiniciar"
+
+# Aguardar Docker iniciar
+sleep 3
+
+# Verificar se Docker está funcionando
+if docker info &>/dev/null; then
+  ok "Docker instalado e funcionando"
+else
+  die "Docker não está respondendo"
 fi
 
-systemctl enable docker
-systemctl restart docker || {
-  print_error "Docker failed to start. Logs:"
-  journalctl -u docker.service --no-pager | tail -n 50
-  exit 1
-}
-
-# Verify Docker configuration
-print_message "${YELLOW}" "Verifying Docker configuration..."
-docker info | grep -E "Cgroup Driver|Storage Driver|Logging Driver"
-
-# --- User Setup ---
-print_message "${YELLOW}" "Creating docker user..."
-adduser --system --group --shell /bin/bash --home /home/docker --disabled-password docker
+# =========================
+# Usuário docker
+# =========================
+log "Criando usuário docker..."
+if ! id docker &>/dev/null; then
+  adduser --disabled-password --gecos "" docker
+fi
 usermod -aG docker docker
 
-# --- SSH Configuration ---
-
-print_message "${YELLOW}" "Configuring SSH..."
+# Setup home directory
 mkdir -p /home/docker/.ssh
+chmod 700 /home/docker/.ssh
 chown -R docker:docker /home/docker
-chmod 755 /home/docker
 
-# Copy root's authorized keys to docker user if they exist
+# Copiar chaves SSH se existirem
 if [ -f /root/.ssh/authorized_keys ]; then
   cp /root/.ssh/authorized_keys /home/docker/.ssh/authorized_keys
-  chown -R docker:docker /home/docker/.ssh
-  chmod 700 /home/docker/.ssh
   chmod 600 /home/docker/.ssh/authorized_keys
+  chown docker:docker /home/docker/.ssh/authorized_keys
+  ok "Chaves SSH copiadas para usuário docker"
+else
+  log "AVISO: Nenhuma chave SSH encontrada em /root/.ssh/authorized_keys"
+  log "       Adicione manualmente em /home/docker/.ssh/authorized_keys"
 fi
 
-cat <<EOF >/etc/ssh/sshd_config
-Include /etc/ssh/sshd_config.d/*.conf
+# =========================
+# SSH (MODULAR, SEGURO)
+# =========================
+log "Endurecendo SSH..."
+mkdir -p /etc/ssh/sshd_config.d
 
-Port 22
-AddressFamily inet
-Protocol 2
-
-HostKey /etc/ssh/ssh_host_ed25519_key
-HostKey /etc/ssh/ssh_host_ecdsa_key
-HostKey /etc/ssh/ssh_host_rsa_key
-
-SyslogFacility AUTH
-LogLevel VERBOSE
-
-LoginGraceTime 30
-PermitRootLogin prohibit-password
-StrictModes yes
-MaxAuthTries 10
-MaxSessions 5
-
-PubkeyAuthentication yes
-HostbasedAuthentication no
-IgnoreRhosts yes
+cat >/etc/ssh/sshd_config.d/99-hardening.conf <<'EOF'
+# Autenticação
 PasswordAuthentication no
-PermitEmptyPasswords no
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
 ChallengeResponseAuthentication no
 
-UsePAM yes
-AllowAgentForwarding no
-AllowTcpForwarding yes  # Required for Docker forwarding
+# Recursos
 X11Forwarding no
-PermitTTY yes
-PrintMotd no
+AllowTcpForwarding yes
+AllowAgentForwarding no
 
+# Timeouts
 ClientAliveInterval 300
 ClientAliveCountMax 2
-TCPKeepAlive no
+LoginGraceTime 30
 
+# Usuários permitidos
 AllowUsers docker root
 
-KexAlgorithms curve25519-sha256@libssh.org,ecdh-sha2-nistp521,ecdh-sha2-nistp384,ecdh-sha2-nistp256
-Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr
-MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com
+# Algoritmos seguros
+KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
 EOF
 
-systemctl reload ssh
+# Testar configuração antes de aplicar
+if sshd -t 2>/dev/null; then
+  systemctl reload ssh
+  ok "SSH endurecido"
+else
+  die "Configuração SSH inválida! Verifique /etc/ssh/sshd_config.d/99-hardening.conf"
+fi
 
-# --- Firewall Configuration ---
-print_message "${YELLOW}" "Configuring firewall..."
+# =========================
+# Firewall
+# =========================
+log "Configurando firewall (com suporte Docker)..."
 ufw --force reset
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow ssh
-ufw allow http
-ufw allow https
-ufw --force enable
+ufw allow OpenSSH
 
-# --- fail2ban Configuration ---
-print_message "${YELLOW}" "Configuring fail2ban..."
+# Se você precisa de HTTP/HTTPS, descomente:
+# ufw allow 80/tcp
+# ufw allow 443/tcp
 
-cat <<EOF >/etc/fail2ban/filter.d/docker.conf
-[Definition]
-failregex = failed login attempt from <HOST>
-ignoreregex =
+# CRÍTICO: Integração UFW + Docker
+mkdir -p /etc/ufw
+cat >>/etc/ufw/after.rules <<'EOF'
+
+# BEGIN UFW AND DOCKER
+*filter
+:ufw-user-forward - [0:0]
+:DOCKER-USER - [0:0]
+
+# Permite tráfego de redes privadas (Docker)
+-A DOCKER-USER -j RETURN -s 10.0.0.0/8
+-A DOCKER-USER -j RETURN -s 172.16.0.0/12
+-A DOCKER-USER -j RETURN -s 192.168.0.0/16
+
+# Encaminha para regras personalizadas
+-A DOCKER-USER -j ufw-user-forward
+
+# Drop conexões novas não autorizadas
+-A DOCKER-USER -j DROP -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m conntrack --ctstate NEW
+
+COMMIT
+# END UFW AND DOCKER
 EOF
 
-cat <<EOF >/etc/fail2ban/jail.local
+ufw --force enable
+ok "Firewall configurado"
+
+# =========================
+# fail2ban
+# =========================
+log "Configurando fail2ban..."
+cat >/etc/fail2ban/jail.local <<'EOF'
 [DEFAULT]
-bantime = 3600
-findtime = 600
-maxretry = 10
-banaction = ufw
-banaction_allports = ufw
+bantime = 1h
+findtime = 10m
+maxretry = 5
 
 [sshd]
 enabled = true
 port = ssh
-filter = sshd
 logpath = /var/log/auth.log
-maxretry = 10
-bantime = 3600
-
-[docker]
-enabled = true
-filter = docker
-logpath = /var/log/auth.log
-maxretry = 5
-bantime = 3600
 EOF
 
-# --- Enable and Start Services ---
-print_message "${YELLOW}" "Enabling services..."
-systemctl enable docker fail2ban auditd chrony
-systemctl restart docker fail2ban auditd chrony
+systemctl enable fail2ban --now
+ok "fail2ban ativo"
 
-# --- Verify Setup ---
-print_message "${YELLOW}" "Verifying security settings..."
-if verify_security_settings; then
-  print_success "Security verification passed"
-else
-  print_warning "Some security checks failed. Please review the warnings above."
-fi
+# =========================
+# Auditd
+# =========================
+log "Configurando auditd para monitorar Docker..."
+cat >/etc/audit/rules.d/docker.rules <<'EOF'
+# Monitoramento Docker
+-w /usr/bin/dockerd -p wa -k docker_daemon
+-w /var/lib/docker -p wa -k docker_data
+-w /etc/docker -p wa -k docker_config
+-w /usr/bin/docker -p wa -k docker_client
+-w /var/run/docker.sock -p wa -k docker_socket
+EOF
 
-# Add logging configuration
-print_message "${YELLOW}" "Configuring system logging..."
-cat <<EOF >/etc/logrotate.d/docker-logs
+augenrules --load
+systemctl restart auditd
+ok "Auditd configurado"
+
+# =========================
+# Logrotate Docker
+# =========================
+log "Configurando rotação de logs do Docker..."
+cat >/etc/logrotate.d/docker <<'EOF'
 /var/lib/docker/containers/*/*.log {
-    rotate 7
-    daily
-    compress
-    size=100M
-    missingok
-    delaycompress
-    copytruncate
+  rotate 7
+  daily
+  compress
+  size=100M
+  missingok
+  delaycompress
+  copytruncate
 }
 EOF
 
-# Automated cleanup to prevent residual files
-print_message "${YELLOW}" "Setting up maintenance tasks..."
-cat <<EOF >/etc/cron.daily/docker-cleanup
+# =========================
+# Limpeza automática Docker
+# =========================
+log "Configurando limpeza automática do Docker..."
+cat >/etc/cron.daily/docker-cleanup <<'EOF'
 #!/bin/bash
-docker system prune -af --volumes
-docker builder prune -af --keep-storage=20GB
+# Limpa imagens, containers e volumes não usados há mais de 72h
+docker system prune -af --volumes --filter "until=72h" >/dev/null 2>&1
 EOF
 chmod +x /etc/cron.daily/docker-cleanup
+ok "Cron de limpeza configurado"
 
-# Configure auditd
-cat <<EOF >/etc/audit/rules.d/audit.rules
-# Docker daemon configuration
--w /usr/bin/dockerd -k docker
--w /var/lib/docker -k docker
--w /etc/docker -k docker
--w /usr/lib/systemd/system/docker.service -k docker
--w /etc/default/docker -k docker
--w /etc/docker/daemon.json -k docker
--w /usr/bin/docker -k docker-bin
-EOF
-
-# Reload audit rules
-auditctl -R /etc/audit/rules.d/audit.rules
-
-# Configure unattended-upgrades for automated security updates
-print_message "${YELLOW}" "Configuring automatic updates..."
-cat <<EOF >/etc/apt/apt.conf.d/50unattended-upgrades
+# =========================
+# Atualizações automáticas
+# =========================
+log "Ativando atualizações automáticas de segurança..."
+cat >/etc/apt/apt.conf.d/50unattended-upgrades <<'EOF'
 Unattended-Upgrade::Allowed-Origins {
-    "\${distro_id}:\${distro_codename}-security";
-    "\${distro_id}ESMApps:\${distro_codename}-apps-security";
-    "\${distro_id}ESM:\${distro_codename}-infra-security";
+    "${distro_id}:${distro_codename}-security";
 };
 Unattended-Upgrade::Remove-Unused-Dependencies "true";
 Unattended-Upgrade::Automatic-Reboot "false";
 EOF
 
-# --- Final Cleanup ---
+cat >/etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+
+dpkg-reconfigure -f noninteractive unattended-upgrades
+ok "Atualizações automáticas ativas"
+
+# =========================
+# Limpeza final
+# =========================
 apt-get autoremove -y
 apt-get clean
 
-print_success "Setup complete! System hardening successful."
-print_message "${YELLOW}" "Important next steps:"
-print_message "${YELLOW}" "1. Add your SSH public key to /home/docker/.ssh/authorized_keys"
-print_message "${YELLOW}" "2. Configure your deployment tools (Kamal, etc.)"
-print_message "${YELLOW}" "3. REBOOT THE SYSTEM to apply all security settings"
-print_message "${YELLOW}" "4. Review logs in /var/log/ regularly"
-print_message "${YELLOW}" "5. Set up external monitoring and alerting"
-
-# Additional verification info
-print_message "${GREEN}" "System Information:"
-echo "Docker Version: $(docker --version)"
-echo "Kernel Version: $(uname -r)"
-echo "AppArmor Status: $(aa-status --enabled && echo 'Enabled' || echo 'Disabled')"
-echo "UFW Status: $(ufw status | grep Status)"
-echo "fail2ban Status: $(fail2ban-client status | grep "Number of jail:")"
+# =========================
+# Relatório final
+# =========================
+echo ""
+ok "========================================="
+ok "  INSTALAÇÃO CONCLUÍDA COM SUCESSO!"
+ok "========================================="
+echo ""
+echo "Sistema: Ubuntu $UBUNTU_VERSION"
+echo "Docker: $(docker --version)"
+echo "AppArmor: $(aa-status --enabled && echo 'Ativo' || echo 'Inativo')"
+echo "UFW: $(ufw status | grep Status)"
+echo "fail2ban: $(systemctl is-active fail2ban)"
+echo "Chrony: $(systemctl is-active chrony)"
+echo ""
+echo "⚠️  PRÓXIMOS PASSOS OBRIGATÓRIOS:"
+echo ""
+echo "1. Adicione sua chave SSH pública em:"
+echo "   /home/docker/.ssh/authorized_keys"
+echo ""
+echo "2. TESTE a conexão SSH como usuário 'docker' em outra janela:"
+echo "   ssh docker@seu-servidor"
+echo ""
+echo "3. SOMENTE após confirmar que SSH funciona, reinicie:"
+echo "   sudo reboot"
+echo ""
+echo "4. Após reiniciar, verifique os serviços:"
+echo "   systemctl status docker fail2ban ufw auditd chrony"
+echo ""
+echo "5. Configure monitoramento externo e backups"
+echo ""
+echo "⚠️  AVISO: Autenticação por senha está DESABILITADA!"
+echo "   Certifique-se de ter acesso via chave SSH antes de desconectar."
+echo ""
