@@ -2,7 +2,7 @@
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-Uma ferramenta de configuração pós-instalação para servidores Ubuntu, simplificando o processo de configuração e implementando as melhores práticas de segurança.
+Uma ferramenta de configuração pós-instalação para servidores Ubuntu, simplificando o processo de configuração e implementando as melhores práticas de segurança Dev Sec Ops.
 
 ## 🚀 Funcionalidades
 
