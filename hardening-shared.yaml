@@ -1,0 +1,64 @@
+---
+- name: Hardening Ubuntu 22.04+ | VPS Compartilhada
+  hosts: all
+  become: true
+
+  vars:
+    cis_level: 1
+    environment: shared
+    enable_kernel_hardening: false
+    enable_docker_hardening: true
+
+  tasks:
+    - name: Atualizar pacotes
+      apt:
+        update_cache: yes
+        upgrade: dist
+
+    - name: Instalar pacotes base de segurança
+      apt:
+        name:
+          - ufw
+          - fail2ban
+          - unattended-upgrades
+          - auditd
+        state: present
+
+    - name: Configurar UFW
+      ufw:
+        state: enabled
+        policy: deny
+
+    - name: Permitir SSH
+      ufw:
+        rule: allow
+        port: 22
+        proto: tcp
+
+    - name: Hardening básico de SSH
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^{{ item.key }}'
+        line: '{{ item.key }} {{ item.value }}'
+      loop:
+        - { key: 'PermitRootLogin', value: 'no' }
+        - { key: 'PasswordAuthentication', value: 'no' }
+        - { key: 'X11Forwarding', value: 'no' }
+
+    - name: Reiniciar SSH
+      service:
+        name: ssh
+        state: restarted
+
+    - name: Configurar sysctl seguro (não destrutivo)
+      sysctl:
+        name: '{{ item.key }}'
+        value: '{{ item.value }}'
+        state: present
+      loop:
+        - { key: 'net.ipv4.conf.all.rp_filter', value: '1' }
+        - { key: 'net.ipv4.tcp_syncookies', value: '1' }
+
+    - name: Auditoria passiva com Lynis
+      command: lynis audit system
+      ignore_errors: true
