@@ -1,4 +1,4 @@
-# Config Ubuntu Server 24.04+
+# Ubuntu Hardening – Ansible 24.04+
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
