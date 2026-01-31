@@ -23,7 +23,7 @@
 ssh root@seu-servidor
 
 # 2. Baixar script
-wget https://raw.githubusercontent.com/brunopirz/configubuntu/blob/main/shared/vpslite.sh
+wget https://raw.githubusercontent.com/brunopirz/configubuntu/main/shared/vpslite.sh
 chmod +x vpslite.sh
 
 # 3. Executar
