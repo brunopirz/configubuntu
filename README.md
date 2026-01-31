@@ -38,6 +38,72 @@ docker network create --driver=overlay network_public
 ```
 PS: Pode substituir o "network_public" pelo nome da rede q preferir
 
+# Ubuntu Hardening – Ansible
+
+Este repositório contém playbooks Ansible para hardening de servidores Ubuntu 22.04+ seguindo CIS Benchmark e boas práticas DevSecOps.
+
+---
+
+## Estrutura
+
+* `hardening_shared.yml` → VPS compartilhada / desenvolvimento
+* `hardening_production.yml` → Produção / servidor dedicado
+* `Ansible Full Hardening – CIS L1+L2 DevSecOps` → Documento arquitetural
+
+---
+
+## Quando usar cada playbook
+
+### hardening_shared.yml
+
+Use quando:
+
+* VPS compartilhada
+* Ambiente de desenvolvimento
+* Provedor não permite alterações profundas de kernel
+
+Características:
+
+* CIS Level 1
+* Hardening seguro
+* Baixo risco de lockout
+
+---
+
+### hardening_production.yml
+
+Use quando:
+
+* Servidor dedicado
+* Cloud VM isolada
+* Ambiente de produção
+
+Características:
+
+* CIS Level 1 + 2
+* Kernel hardening
+* Docker hardening
+* Auditoria ativa
+
+---
+
+## Execução
+
+```bash
+ansible-playbook -i inventory hardening_shared.yml
+ansible-playbook -i inventory hardening_production.yml
+```
+
+Recomendado executar primeiro em `--check` (dry-run).
+
+---
+
+## Aviso Importante
+
+Nunca aplique hardening de produção em VPS compartilhada.
+
+Sempre valide acesso SSH antes de aplicar mudanças restritivas.
+
 ## 🤝 Contribua
 
 Aceitamos contribuições! Veja como você pode ajudar:
