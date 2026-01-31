@@ -1,0 +1,158 @@
+# Ansible Playbook - Ubuntu 22.04+ CIS Level 1 Hardening
+# Baseado no install.sh previamente validado
+# Escopo: Host OS + Docker (Level 1 - seguro e compatível)
+
+- name: Ubuntu CIS Level 1 Hardening
+  hosts: all
+  become: true
+  vars:
+    min_ubuntu_version: "22.04"
+    docker_user: docker
+
+  pre_tasks:
+    - name: Verificar versão do Ubuntu
+      assert:
+        that:
+          - ansible_distribution == "Ubuntu"
+          - ansible_distribution_version is version(min_ubuntu_version, '>=')
+        fail_msg: "Ubuntu 22.04+ é obrigatório"
+
+    - name: Atualizar cache APT
+      apt:
+        update_cache: yes
+
+  tasks:
+    - name: Atualizar sistema
+      apt:
+        upgrade: dist
+
+    - name: Instalar pacotes essenciais
+      apt:
+        name:
+          - ufw
+          - fail2ban
+          - auditd
+          - audispd-plugins
+          - unattended-upgrades
+          - apparmor
+          - apparmor-utils
+          - aide
+          - chrony
+          - curl
+          - ca-certificates
+          - git
+        state: present
+
+    - name: Garantir chrony ativo
+      service:
+        name: chrony
+        enabled: true
+        state: started
+
+    - name: Aplicar sysctl hardening (CIS Level 1)
+      copy:
+        dest: /etc/sysctl.d/99-cis-hardening.conf
+        content: |
+          kernel.randomize_va_space = 2
+          kernel.kptr_restrict = 2
+          kernel.dmesg_restrict = 1
+          fs.protected_hardlinks = 1
+          fs.protected_symlinks = 1
+          fs.suid_dumpable = 0
+          net.ipv4.ip_forward = 1
+          net.ipv4.conf.all.send_redirects = 0
+          net.ipv4.conf.default.send_redirects = 0
+          net.ipv4.conf.all.accept_redirects = 0
+          net.ipv4.conf.default.accept_redirects = 0
+          net.ipv4.conf.all.accept_source_route = 0
+          net.ipv4.conf.default.accept_source_route = 0
+          net.ipv4.tcp_syncookies = 1
+
+    - name: Recarregar sysctl
+      command: sysctl --system
+
+    - name: Garantir AppArmor ativo
+      service:
+        name: apparmor
+        enabled: true
+        state: started
+
+    - name: Inicializar AIDE
+      command: aide --init
+      args:
+        creates: /var/lib/aide/aide.db
+
+    - name: Instalar Docker
+      shell: curl -fsSL https://get.docker.com | sh
+      args:
+        creates: /usr/bin/docker
+
+    - name: Configurar Docker daemon
+      copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {"max-size": "10m", "max-file": "3"},
+            "userland-proxy": false,
+            "no-new-privileges": true,
+            "iptables": true,
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Criar usuário docker
+      user:
+        name: "{{ docker_user }}"
+        groups: docker
+        append: yes
+        shell: /bin/bash
+
+    - name: Configurar SSH hardening
+      copy:
+        dest: /etc/ssh/sshd_config.d/99-cis.conf
+        content: |
+          PasswordAuthentication no
+          PermitRootLogin prohibit-password
+          PubkeyAuthentication yes
+          ChallengeResponseAuthentication no
+          X11Forwarding no
+          ClientAliveInterval 300
+          ClientAliveCountMax 2
+      notify: Reload SSH
+
+    - name: Configurar UFW
+      ufw:
+        rule: allow
+        name: OpenSSH
+
+    - name: Ativar UFW
+      ufw:
+        state: enabled
+        policy: deny
+
+    - name: Configurar fail2ban
+      copy:
+        dest: /etc/fail2ban/jail.local
+        content: |
+          [sshd]
+          enabled = true
+          maxretry = 5
+          bantime = 1h
+
+    - name: Garantir fail2ban ativo
+      service:
+        name: fail2ban
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart Docker
+      service:
+        name: docker
+        state: restarted
+
+    - name: Reload SSH
+      service:
+        name: ssh
+        state: reloaded
