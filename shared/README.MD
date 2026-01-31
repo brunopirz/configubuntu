@@ -24,10 +24,10 @@ ssh root@seu-servidor
 
 # 2. Baixar script
 wget https://raw.githubusercontent.com/brunopirz/configubuntu/blob/main/shared/vpslite.sh
-chmod +x vps-hardening-lite.sh
+chmod +x vpslite.sh
 
 # 3. Executar
-./vps-hardening-lite.sh
+./vpslite.sh
 
 # 4. Definir senha para usuário docker
 passwd docker
@@ -260,9 +260,9 @@ Baseado em:
 ## 🚀 Comece Agora!
 
 ```bash
-wget https://raw.githubusercontent.com/SEU-REPO/vps-hardening-lite.sh
-chmod +x vps-hardening-lite.sh
-sudo ./vps-hardening-lite.sh
+wget https://raw.githubusercontent.com/SEU-REPO/vpslite.sh
+chmod +x vpslite.sh
+sudo ./vpslite.sh
 ```
 
 **Tempo estimado:** 10 minutos  
