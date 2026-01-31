@@ -1,0 +1,535 @@
+---
+# Hardening Ubuntu 22.04+ | VPS Compartilhada - Otimizado
+# Balanceamento: Segurança + Performance + Custo
+# Nível: CIS Level 1 adaptado para recursos limitados
+
+- name: Hardening Inteligente para VPS Compartilhada
+  hosts: all
+  become: true
+  
+  vars:
+    # Configurações de ambiente
+    cis_level: 1
+    environment: shared_vps
+    vps_ram_mb: 1024  # Ajuste conforme seu VPS
+    
+    # Features seletivas (desabilitar o que não precisa)
+    enable_kernel_hardening: false  # ✅ Desabilitado - pode causar problemas em VPS
+    enable_docker_hardening: true   # ✅ Habilitado - você usa Docker
+    enable_aide: false               # ⚠️ AIDE consome muito I/O em VPS compartilhada
+    enable_apparmor: true            # ✅ Leve e eficaz
+    enable_auditd_light: true        # ✅ Auditoria leve (só eventos críticos)
+    enable_rkhunter: false           # ⚠️ Scan pesado demais para VPS pequena
+    
+    # SSH Configuration
+    ssh_port: 22  # Mude se quiser obscurity adicional
+    ssh_max_auth_tries: 3
+    ssh_client_alive_interval: 300
+    
+    # fail2ban
+    f2b_bantime: 3600
+    f2b_maxretry: 3
+    
+    # Docker user
+    docker_user: docker
+    
+  tasks:
+    # ============================================
+    # 1. PRÉ-CHECKS E VALIDAÇÃO
+    # ============================================
+    - name: Verificar se é Ubuntu 22.04+
+      assert:
+        that:
+          - ansible_distribution == 'Ubuntu'
+          - ansible_distribution_version is version('22.04', '>=')
+        fail_msg: "Este playbook requer Ubuntu 22.04 ou superior"
+    
+    - name: Verificar memória disponível
+      debug:
+        msg: "RAM: {{ ansible_memtotal_mb }}MB - {{ 'OK' if ansible_memtotal_mb >= 512 else 'AVISO: RAM baixa' }}"
+    
+    # ============================================
+    # 2. SYSTEM UPDATE
+    # ============================================
+    - name: Atualizar cache APT
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    
+    - name: Atualizar sistema (non-interactive)
+      apt:
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+    
+    # ============================================
+    # 3. PACOTES ESSENCIAIS (LEVES)
+    # ============================================
+    - name: Instalar pacotes de segurança (leves)
+      apt:
+        name:
+          - ufw
+          - fail2ban
+          - unattended-upgrades
+          - "{{ 'auditd' if enable_auditd_light else omit }}"
+          - "{{ 'apparmor' if enable_apparmor else omit }}"
+          - chrony
+          - logwatch
+          - apt-listchanges
+        state: present
+    
+    # ============================================
+    # 4. TIME SYNC (LEVE)
+    # ============================================
+    - name: Desabilitar systemd-timesyncd
+      systemd:
+        name: systemd-timesyncd
+        state: stopped
+        enabled: no
+      ignore_errors: yes
+    
+    - name: Configurar chrony (mais leve que NTP)
+      copy:
+        dest: /etc/chrony/chrony.conf
+        content: |
+          pool 2.ubuntu.pool.ntp.org iburst maxsources 2
+          driftfile /var/lib/chrony/drift
+          makestep 1.0 3
+          rtcsync
+        mode: '0644'
+    
+    - name: Iniciar chrony
+      systemd:
+        name: chrony
+        state: restarted
+        enabled: yes
+    
+    # ============================================
+    # 5. SYSCTL - HARDENING LEVE (SEM KERNEL PESADO)
+    # ============================================
+    - name: Configurar sysctl - Segurança Balanceada
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        sysctl_file: /etc/sysctl.d/60-hardening-vps.conf
+        reload: yes
+      loop:
+        # Network security (leve)
+        - { key: 'net.ipv4.conf.all.rp_filter', value: '1' }
+        - { key: 'net.ipv4.conf.default.rp_filter', value: '1' }
+        - { key: 'net.ipv4.tcp_syncookies', value: '1' }
+        - { key: 'net.ipv4.conf.all.accept_source_route', value: '0' }
+        - { key: 'net.ipv4.conf.all.accept_redirects', value: '0' }
+        - { key: 'net.ipv4.conf.all.send_redirects', value: '0' }
+        - { key: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
+        
+        # Docker requirements
+        - { key: 'net.ipv4.ip_forward', value: '1' }
+        
+        # Log martians OFF (evita spam em VPS)
+        - { key: 'net.ipv4.conf.all.log_martians', value: '0' }
+        
+        # Filesystem (leve)
+        - { key: 'fs.protected_hardlinks', value: '1' }
+        - { key: 'fs.protected_symlinks', value: '1' }
+        
+        # NÃO incluir kernel hardening pesado em VPS compartilhada:
+        # kernel.kptr_restrict, dmesg_restrict podem causar problemas
+    
+    # ============================================
+    # 6. SSH HARDENING (CIS COMPLIANT)
+    # ============================================
+    - name: Backup SSH config
+      copy:
+        src: /etc/ssh/sshd_config
+        dest: /etc/ssh/sshd_config.backup
+        remote_src: yes
+        force: no
+    
+    - name: Configurar SSH - CIS Level 1
+      blockinfile:
+        path: /etc/ssh/sshd_config.d/99-hardening.conf
+        create: yes
+        mode: '0600'
+        block: |
+          # CIS SSH Hardening - VPS Optimized
+          Port {{ ssh_port }}
+          Protocol 2
+          
+          # Authentication
+          PermitRootLogin prohibit-password
+          PasswordAuthentication no
+          PubkeyAuthentication yes
+          ChallengeResponseAuthentication no
+          PermitEmptyPasswords no
+          
+          # Security
+          X11Forwarding no
+          AllowTcpForwarding yes
+          MaxAuthTries {{ ssh_max_auth_tries }}
+          MaxSessions 5
+          LoginGraceTime 30
+          
+          # Timeouts
+          ClientAliveInterval {{ ssh_client_alive_interval }}
+          ClientAliveCountMax 2
+          
+          # Logging
+          LogLevel VERBOSE
+          SyslogFacility AUTH
+          
+          # Crypto (secure but not extreme)
+          KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256
+          Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
+          MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+    
+    - name: Testar configuração SSH
+      command: sshd -t
+      changed_when: false
+    
+    - name: Reiniciar SSH
+      systemd:
+        name: ssh
+        state: reloaded
+    
+    # ============================================
+    # 7. FIREWALL (UFW + DOCKER)
+    # ============================================
+    - name: Reset UFW
+      ufw:
+        state: reset
+    
+    - name: Configurar UFW defaults
+      ufw:
+        direction: "{{ item.direction }}"
+        policy: "{{ item.policy }}"
+      loop:
+        - { direction: 'incoming', policy: 'deny' }
+        - { direction: 'outgoing', policy: 'allow' }
+    
+    - name: Permitir SSH
+      ufw:
+        rule: allow
+        port: "{{ ssh_port }}"
+        proto: tcp
+    
+    # Docker + UFW integration
+    - name: Criar regras UFW para Docker
+      blockinfile:
+        path: /etc/ufw/after.rules
+        block: |
+          # BEGIN UFW AND DOCKER
+          *filter
+          :ufw-user-forward - [0:0]
+          :DOCKER-USER - [0:0]
+          
+          # Allow Docker internal networks
+          -A DOCKER-USER -s 10.0.0.0/8 -j ACCEPT
+          -A DOCKER-USER -s 172.16.0.0/12 -j ACCEPT
+          -A DOCKER-USER -s 192.168.0.0/16 -j ACCEPT
+          
+          # Forward to UFW
+          -A DOCKER-USER -j ufw-user-forward
+          
+          # Drop invalid
+          -A DOCKER-USER -m conntrack --ctstate INVALID -j DROP
+          -A DOCKER-USER -j RETURN
+          
+          COMMIT
+          # END UFW AND DOCKER
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - DOCKER"
+      when: enable_docker_hardening
+    
+    - name: Habilitar UFW
+      ufw:
+        state: enabled
+    
+    # ============================================
+    # 8. FAIL2BAN
+    # ============================================
+    - name: Configurar fail2ban
+      copy:
+        dest: /etc/fail2ban/jail.local
+        content: |
+          [DEFAULT]
+          bantime = {{ f2b_bantime }}
+          findtime = 600
+          maxretry = {{ f2b_maxretry }}
+          destemail = root@localhost
+          
+          [sshd]
+          enabled = true
+          port = {{ ssh_port }}
+          filter = sshd
+          logpath = /var/log/auth.log
+          maxretry = {{ f2b_maxretry }}
+        mode: '0644'
+    
+    - name: Iniciar fail2ban
+      systemd:
+        name: fail2ban
+        state: restarted
+        enabled: yes
+    
+    # ============================================
+    # 9. AUDITD LEVE (SÓ EVENTOS CRÍTICOS)
+    # ============================================
+    - name: Configurar auditd leve
+      copy:
+        dest: /etc/audit/rules.d/hardening.rules
+        content: |
+          # Audit rules - VPS Light (só eventos críticos)
+          
+          # Mudanças em sudo
+          -w /etc/sudoers -p wa -k sudoers
+          -w /etc/sudoers.d/ -p wa -k sudoers
+          
+          # Mudanças em SSH
+          -w /etc/ssh/sshd_config -p wa -k sshd
+          
+          # Logins
+          -w /var/log/faillog -p wa -k logins
+          -w /var/log/lastlog -p wa -k logins
+          
+          # Docker (se habilitado)
+          -w /usr/bin/dockerd -p wa -k docker
+          -w /etc/docker -p wa -k docker
+        mode: '0640'
+      when: enable_auditd_light
+    
+    - name: Recarregar audit rules
+      command: augenrules --load
+      when: enable_auditd_light
+      changed_when: false
+    
+    # ============================================
+    # 10. APPARMOR (LEVE E EFICAZ)
+    # ============================================
+    - name: Habilitar AppArmor
+      systemd:
+        name: apparmor
+        state: started
+        enabled: yes
+      when: enable_apparmor
+    
+    # ============================================
+    # 11. DOCKER HARDENING
+    # ============================================
+    - name: Instalar Docker
+      shell: curl -fsSL https://get.docker.com | sh
+      args:
+        creates: /usr/bin/docker
+      when: enable_docker_hardening
+    
+    - name: Configurar Docker - Seguro para VPS
+      copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "5m",
+              "max-file": "3"
+            },
+            "userland-proxy": false,
+            "no-new-privileges": true,
+            "iptables": true,
+            "storage-driver": "overlay2",
+            "live-restore": true
+          }
+        mode: '0644'
+      when: enable_docker_hardening
+    
+    - name: Reiniciar Docker
+      systemd:
+        name: docker
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+      when: enable_docker_hardening
+    
+    - name: Criar usuário docker
+      user:
+        name: "{{ docker_user }}"
+        groups: docker
+        shell: /bin/bash
+        create_home: yes
+      when: enable_docker_hardening
+    
+    - name: Configurar SSH para usuário docker
+      file:
+        path: "/home/{{ docker_user }}/.ssh"
+        state: directory
+        owner: "{{ docker_user }}"
+        group: "{{ docker_user }}"
+        mode: '0700'
+      when: enable_docker_hardening
+    
+    # ============================================
+    # 12. ATUALIZAÇÕES AUTOMÁTICAS
+    # ============================================
+    - name: Configurar unattended-upgrades
+      copy:
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        content: |
+          Unattended-Upgrade::Allowed-Origins {
+              "${distro_id}:${distro_codename}-security";
+          };
+          Unattended-Upgrade::Remove-Unused-Dependencies "true";
+          Unattended-Upgrade::Automatic-Reboot "false";
+        mode: '0644'
+    
+    - name: Habilitar atualizações automáticas
+      copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+          APT::Periodic::AutocleanInterval "7";
+        mode: '0644'
+    
+    # ============================================
+    # 13. LIMPEZA E OTIMIZAÇÃO
+    # ============================================
+    - name: Criar script de limpeza semanal
+      copy:
+        dest: /etc/cron.weekly/cleanup-vps
+        content: |
+          #!/bin/bash
+          # Limpeza leve para VPS
+          
+          # Limpar logs antigos
+          find /var/log -type f -name "*.gz" -mtime +30 -delete
+          find /var/log -type f -name "*.1" -mtime +7 -delete
+          
+          # Limpar cache APT
+          apt-get clean
+          apt-get autoremove -y
+          
+          # Docker cleanup (se instalado)
+          if command -v docker &> /dev/null; then
+            docker system prune -af --volumes --filter "until=168h"
+          fi
+        mode: '0755'
+    
+    # ============================================
+    # 14. LIMITES DE RECURSOS (IMPORTANTE EM VPS)
+    # ============================================
+    - name: Configurar limites de recursos
+      copy:
+        dest: /etc/security/limits.d/vps.conf
+        content: |
+          # Limites para VPS compartilhada
+          * soft nofile 4096
+          * hard nofile 8192
+          * soft nproc 2048
+          * hard nproc 4096
+        mode: '0644'
+    
+    # ============================================
+    # 15. PERMISSÕES CRÍTICAS
+    # ============================================
+    - name: Configurar permissões de arquivos críticos
+      file:
+        path: "{{ item.path }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: '/etc/passwd', mode: '0644' }
+        - { path: '/etc/shadow', mode: '0640' }
+        - { path: '/etc/group', mode: '0644' }
+        - { path: '/etc/gshadow', mode: '0640' }
+    
+    # ============================================
+    # 16. MONITORAMENTO LEVE
+    # ============================================
+    - name: Configurar logwatch semanal
+      lineinfile:
+        path: /etc/cron.weekly/00logwatch
+        line: '/usr/sbin/logwatch --output mail --mailto root --detail low'
+        create: yes
+        mode: '0755'
+    
+    # ============================================
+    # 17. VALIDAÇÃO FINAL
+    # ============================================
+    - name: Verificar serviços críticos
+      systemd:
+        name: "{{ item }}"
+        state: started
+      loop:
+        - ssh
+        - ufw
+        - fail2ban
+        - chrony
+        - "{{ 'docker' if enable_docker_hardening else omit }}"
+      ignore_errors: yes
+    
+    - name: Gerar relatório de hardening
+      shell: |
+        cat > /root/hardening-report.txt <<EOF
+        ================================================
+        HARDENING REPORT - VPS Compartilhada
+        Data: $(date)
+        Hostname: $(hostname)
+        ================================================
+        
+        SISTEMA:
+        - OS: $(lsb_release -ds)
+        - Kernel: $(uname -r)
+        - RAM: {{ ansible_memtotal_mb }}MB
+        - Disk: $(df -h / | awk 'NR==2 {print $4}') free
+        
+        SERVIÇOS DE SEGURANÇA:
+        - UFW: $(ufw status | grep Status)
+        - fail2ban: $(systemctl is-active fail2ban)
+        - SSH: $(systemctl is-active ssh)
+        - Chrony: $(systemctl is-active chrony)
+        $(if systemctl is-active docker &>/dev/null; then echo "- Docker: active"; fi)
+        $(if systemctl is-active apparmor &>/dev/null; then echo "- AppArmor: active"; fi)
+        $(if systemctl is-active auditd &>/dev/null; then echo "- Auditd: active"; fi)
+        
+        SSH CONFIG:
+        - Port: {{ ssh_port }}
+        - Root Login: prohibit-password
+        - Password Auth: no
+        
+        PRÓXIMOS PASSOS:
+        1. Adicionar chave SSH em /home/{{ docker_user }}/.ssh/authorized_keys
+        2. Testar conexão SSH antes de desconectar
+        3. Revisar /var/log/auth.log regularmente
+        4. Configurar backup externo
+        
+        ================================================
+        EOF
+        cat /root/hardening-report.txt
+      changed_when: false
+    
+    - name: Exibir resumo
+      debug:
+        msg:
+          - "=========================================="
+          - "HARDENING CONCLUÍDO COM SUCESSO!"
+          - "=========================================="
+          - ""
+          - "Configuração: VPS Compartilhada Otimizada"
+          - "Nível CIS: Level 1 (adaptado)"
+          - "RAM: {{ ansible_memtotal_mb }}MB"
+          - ""
+          - "ATENÇÃO:"
+          - "1. Configure chaves SSH para usuário {{ docker_user }}"
+          - "2. TESTE SSH antes de desconectar!"
+          - "3. Relatório completo: /root/hardening-report.txt"
+          - ""
+          - "=========================================="
+
+# ============================================
+# HANDLERS
+# ============================================
+  handlers:
+    - name: reload sshd
+      systemd:
+        name: ssh
+        state: reloaded
