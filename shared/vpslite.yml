@@ -1,0 +1,597 @@
+---
+# VPS Hardening Playbook - Versão Lite Híbrida
+# Ubuntu 22.04+ | VPS Compartilhada | Segurança + Performance
+# Permite autenticação por senha (com proteção fail2ban)
+
+- name: Hardening VPS - Versão Lite com Senha
+  hosts: all
+  become: true
+  
+  vars:
+    # Configurações básicas
+    min_ram_mb: 900
+    min_disk_gb: 5
+    docker_user: docker
+    
+    # SSH (permite senha)
+    ssh_port: 22
+    ssh_max_auth_tries: 3
+    ssh_password_auth: true  # ✅ Senha habilitada
+    ssh_client_alive_interval: 300
+    
+    # fail2ban (agressivo devido ao uso de senha)
+    f2b_bantime: 3600
+    f2b_findtime: 600
+    f2b_maxretry: 3
+    
+    # Features
+    enable_docker: true
+    enable_apparmor: true
+    enable_unattended_upgrades: true
+  
+  pre_tasks:
+    - name: Validar Ubuntu 22.04+
+      assert:
+        that:
+          - ansible_distribution == 'Ubuntu'
+          - ansible_distribution_version is version('22.04', '>=')
+        fail_msg: "Requer Ubuntu 22.04 ou superior"
+    
+    - name: Validar recursos mínimos
+      assert:
+        that:
+          - ansible_memtotal_mb >= min_ram_mb
+        fail_msg: "RAM insuficiente: {{ ansible_memtotal_mb }}MB (mínimo: {{ min_ram_mb }}MB)"
+    
+    - name: Mostrar informações do sistema
+      debug:
+        msg:
+          - "Sistema: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "RAM: {{ ansible_memtotal_mb }}MB"
+          - "Disco livre: {{ ansible_mounts[0].size_available | human_readable }}"
+  
+  tasks:
+    # ============================================
+    # 1. ATUALIZAÇÃO DO SISTEMA
+    # ============================================
+    - name: Atualizar cache APT
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    
+    - name: Upgrade completo do sistema
+      apt:
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+    
+    # ============================================
+    # 2. PACOTES ESSENCIAIS
+    # ============================================
+    - name: Instalar pacotes de segurança
+      apt:
+        name:
+          - ufw
+          - fail2ban
+          - curl
+          - wget
+          - unattended-upgrades
+          - apparmor
+          - apparmor-utils
+          - chrony
+          - logwatch
+          - apt-listchanges
+        state: present
+        update_cache: yes
+    
+    # ============================================
+    # 3. SINCRONIZAÇÃO DE TEMPO
+    # ============================================
+    - name: Desabilitar systemd-timesyncd
+      systemd:
+        name: systemd-timesyncd
+        state: stopped
+        enabled: no
+      ignore_errors: yes
+    
+    - name: Configurar chrony
+      copy:
+        dest: /etc/chrony/chrony.conf
+        content: |
+          pool 2.ubuntu.pool.ntp.org iburst maxsources 2
+          pool 2.south-america.pool.ntp.org iburst maxsources 1
+          driftfile /var/lib/chrony/drift
+          makestep 1.0 3
+          rtcsync
+        mode: '0644'
+      notify: restart chrony
+    
+    - name: Iniciar chrony
+      systemd:
+        name: chrony
+        state: started
+        enabled: yes
+    
+    # ============================================
+    # 4. HARDENING DE KERNEL (LEVE)
+    # ============================================
+    - name: Aplicar hardening de kernel
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        sysctl_file: /etc/sysctl.d/99-hardening-lite.conf
+        reload: yes
+      loop:
+        # Filesystem
+        - { key: 'fs.protected_hardlinks', value: '1' }
+        - { key: 'fs.protected_symlinks', value: '1' }
+        - { key: 'fs.suid_dumpable', value: '0' }
+        
+        # Network
+        - { key: 'net.ipv4.ip_forward', value: '1' }
+        - { key: 'net.ipv4.conf.all.rp_filter', value: '1' }
+        - { key: 'net.ipv4.conf.default.rp_filter', value: '1' }
+        - { key: 'net.ipv4.conf.all.send_redirects', value: '0' }
+        - { key: 'net.ipv4.conf.default.send_redirects', value: '0' }
+        - { key: 'net.ipv4.conf.all.accept_redirects', value: '0' }
+        - { key: 'net.ipv4.conf.default.accept_redirects', value: '0' }
+        - { key: 'net.ipv4.conf.all.accept_source_route', value: '0' }
+        - { key: 'net.ipv4.conf.default.accept_source_route', value: '0' }
+        - { key: 'net.ipv4.conf.all.log_martians', value: '0' }
+        - { key: 'net.ipv4.conf.default.log_martians', value: '0' }
+        - { key: 'net.ipv4.tcp_syncookies', value: '1' }
+        - { key: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
+        - { key: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
+        
+        # IPv6
+        - { key: 'net.ipv6.conf.all.accept_ra', value: '0' }
+        - { key: 'net.ipv6.conf.default.accept_ra', value: '0' }
+        
+        # Limits
+        - { key: 'fs.file-max', value: '524288' }
+        - { key: 'kernel.pid_max', value: '32768' }
+    
+    # ============================================
+    # 5. APPARMOR
+    # ============================================
+    - name: Ativar AppArmor
+      systemd:
+        name: apparmor
+        state: started
+        enabled: yes
+      when: enable_apparmor
+    
+    # ============================================
+    # 6. DOCKER
+    # ============================================
+    - name: Verificar se Docker está instalado
+      command: which docker
+      register: docker_installed
+      ignore_errors: yes
+      changed_when: false
+    
+    - name: Instalar Docker
+      shell: curl -fsSL https://get.docker.com | sh
+      args:
+        creates: /usr/bin/docker
+      when: 
+        - enable_docker
+        - docker_installed.rc != 0
+    
+    - name: Configurar Docker
+      copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "5m",
+              "max-file": "3"
+            },
+            "userland-proxy": false,
+            "no-new-privileges": true,
+            "iptables": true,
+            "storage-driver": "overlay2",
+            "live-restore": true,
+            "features": { "buildkit": true }
+          }
+        mode: '0644'
+      when: enable_docker
+      notify: restart docker
+    
+    - name: Garantir que Docker está ativo
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      when: enable_docker
+    
+    # ============================================
+    # 7. USUÁRIO DOCKER
+    # ============================================
+    - name: Criar usuário docker
+      user:
+        name: "{{ docker_user }}"
+        groups: docker
+        shell: /bin/bash
+        create_home: yes
+        append: yes
+      when: enable_docker
+    
+    - name: Criar diretório SSH para usuário docker
+      file:
+        path: "/home/{{ docker_user }}/.ssh"
+        state: directory
+        owner: "{{ docker_user }}"
+        group: "{{ docker_user }}"
+        mode: '0700'
+      when: enable_docker
+    
+    - name: Copiar chaves SSH de root (se existirem)
+      copy:
+        src: /root/.ssh/authorized_keys
+        dest: "/home/{{ docker_user }}/.ssh/authorized_keys"
+        remote_src: yes
+        owner: "{{ docker_user }}"
+        group: "{{ docker_user }}"
+        mode: '0600'
+        force: no
+      ignore_errors: yes
+      when: enable_docker
+    
+    # ============================================
+    # 8. SSH HARDENING (COM SENHA)
+    # ============================================
+    - name: Backup SSH config
+      copy:
+        src: /etc/ssh/sshd_config
+        dest: "/etc/ssh/sshd_config.backup.{{ ansible_date_time.date }}"
+        remote_src: yes
+        force: no
+    
+    - name: Criar diretório para configs SSH modulares
+      file:
+        path: /etc/ssh/sshd_config.d
+        state: directory
+        mode: '0755'
+    
+    - name: Configurar SSH hardening
+      copy:
+        dest: /etc/ssh/sshd_config.d/99-hardening.conf
+        content: |
+          # Autenticação - PERMITE SENHA (com limitações)
+          PasswordAuthentication {{ 'yes' if ssh_password_auth else 'no' }}
+          PubkeyAuthentication yes
+          PermitRootLogin prohibit-password
+          ChallengeResponseAuthentication no
+          PermitEmptyPasswords no
+          
+          # Segurança extra para compensar uso de senha
+          MaxAuthTries {{ ssh_max_auth_tries }}
+          MaxSessions 5
+          LoginGraceTime 30
+          
+          # Recursos
+          X11Forwarding no
+          AllowTcpForwarding yes
+          AllowAgentForwarding no
+          
+          # Timeouts
+          ClientAliveInterval {{ ssh_client_alive_interval }}
+          ClientAliveCountMax 2
+          
+          # Usuários permitidos
+          AllowUsers {{ docker_user }} root
+          
+          # Logging detalhado (importante com senha habilitada)
+          LogLevel VERBOSE
+          SyslogFacility AUTH
+          
+          # Algoritmos seguros (balanceado)
+          KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256
+          Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
+          MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+        mode: '0600'
+      notify: reload ssh
+    
+    - name: Testar configuração SSH
+      command: sshd -t
+      changed_when: false
+    
+    # ============================================
+    # 9. FIREWALL (UFW + DOCKER)
+    # ============================================
+    - name: Reset UFW
+      community.general.ufw:
+        state: reset
+    
+    - name: Configurar defaults UFW
+      community.general.ufw:
+        direction: "{{ item.direction }}"
+        policy: "{{ item.policy }}"
+      loop:
+        - { direction: 'incoming', policy: 'deny' }
+        - { direction: 'outgoing', policy: 'allow' }
+    
+    - name: Permitir SSH
+      community.general.ufw:
+        rule: allow
+        port: "{{ ssh_port }}"
+        proto: tcp
+    
+    - name: Integração UFW + Docker
+      blockinfile:
+        path: /etc/ufw/after.rules
+        marker: "# {mark} ANSIBLE MANAGED - DOCKER"
+        block: |
+          # BEGIN UFW AND DOCKER
+          *filter
+          :ufw-user-forward - [0:0]
+          :DOCKER-USER - [0:0]
+          
+          # Permite redes privadas Docker
+          -A DOCKER-USER -j RETURN -s 10.0.0.0/8
+          -A DOCKER-USER -j RETURN -s 172.16.0.0/12
+          -A DOCKER-USER -j RETURN -s 192.168.0.0/16
+          
+          # Encaminha para regras UFW
+          -A DOCKER-USER -j ufw-user-forward
+          
+          # Drop inválidos
+          -A DOCKER-USER -m conntrack --ctstate INVALID -j DROP
+          -A DOCKER-USER -j RETURN
+          
+          COMMIT
+          # END UFW AND DOCKER
+      when: enable_docker
+    
+    - name: Habilitar UFW
+      community.general.ufw:
+        state: enabled
+    
+    # ============================================
+    # 10. FAIL2BAN (CRÍTICO COM SENHA)
+    # ============================================
+    - name: Configurar fail2ban
+      copy:
+        dest: /etc/fail2ban/jail.local
+        content: |
+          [DEFAULT]
+          # Configuração agressiva devido ao uso de senha
+          bantime = {{ f2b_bantime }}
+          findtime = {{ f2b_findtime }}
+          maxretry = {{ f2b_maxretry }}
+          destemail = root@localhost
+          
+          [sshd]
+          enabled = true
+          port = {{ ssh_port }}
+          filter = sshd
+          logpath = /var/log/auth.log
+          maxretry = {{ f2b_maxretry }}
+          bantime = {{ f2b_bantime }}
+          
+          # Proteção extra contra scans
+          [sshd-ddos]
+          enabled = true
+          port = {{ ssh_port }}
+          filter = sshd-ddos
+          logpath = /var/log/auth.log
+          maxretry = 6
+          bantime = 600
+        mode: '0644'
+      notify: restart fail2ban
+    
+    - name: Criar filtro fail2ban para DDOS
+      copy:
+        dest: /etc/fail2ban/filter.d/sshd-ddos.conf
+        content: |
+          [Definition]
+          failregex = ^%(__prefix_line)sDid not receive identification string from <HOST>\s*$
+                      ^%(__prefix_line)sConnection (closed|reset) by <HOST> port \d+\s*$
+          ignoreregex =
+        mode: '0644'
+      notify: restart fail2ban
+    
+    - name: Garantir que fail2ban está ativo
+      systemd:
+        name: fail2ban
+        state: started
+        enabled: yes
+    
+    # ============================================
+    # 11. LIMITES DE RECURSOS
+    # ============================================
+    - name: Configurar limites de recursos
+      copy:
+        dest: /etc/security/limits.d/vps.conf
+        content: |
+          # Limites para VPS compartilhada
+          * soft nofile 4096
+          * hard nofile 8192
+          * soft nproc 2048
+          * hard nproc 4096
+        mode: '0644'
+    
+    # ============================================
+    # 12. LIMPEZA AUTOMÁTICA
+    # ============================================
+    - name: Criar script de limpeza semanal
+      copy:
+        dest: /etc/cron.weekly/cleanup-vps
+        content: |
+          #!/bin/bash
+          # Limpeza VPS
+          
+          # Docker
+          docker system prune -af --volumes --filter "until=168h" >/dev/null 2>&1
+          
+          # Logs antigos
+          find /var/log -type f -name "*.gz" -mtime +30 -delete
+          find /var/log -type f -name "*.1" -mtime +7 -delete
+          
+          # APT
+          apt-get clean
+          apt-get autoremove -y
+        mode: '0755'
+    
+    # ============================================
+    # 13. ATUALIZAÇÕES AUTOMÁTICAS
+    # ============================================
+    - name: Configurar unattended-upgrades
+      copy:
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        content: |
+          Unattended-Upgrade::Allowed-Origins {
+              "${distro_id}:${distro_codename}-security";
+          };
+          Unattended-Upgrade::DevRelease "false";
+          Unattended-Upgrade::Remove-Unused-Dependencies "true";
+          Unattended-Upgrade::Automatic-Reboot "false";
+        mode: '0644'
+      when: enable_unattended_upgrades
+    
+    - name: Ativar atualizações automáticas
+      copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+          APT::Periodic::AutocleanInterval "7";
+          APT::Periodic::Download-Upgradeable-Packages "1";
+        mode: '0644'
+      when: enable_unattended_upgrades
+    
+    - name: Reconfigurar unattended-upgrades
+      command: dpkg-reconfigure -f noninteractive unattended-upgrades
+      when: enable_unattended_upgrades
+      changed_when: false
+    
+    # ============================================
+    # 14. PERMISSÕES CRÍTICAS
+    # ============================================
+    - name: Ajustar permissões de arquivos críticos
+      file:
+        path: "{{ item.path }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: '/etc/passwd', mode: '0644' }
+        - { path: '/etc/shadow', mode: '0640' }
+        - { path: '/etc/group', mode: '0644' }
+        - { path: '/etc/gshadow', mode: '0640' }
+    
+    # ============================================
+    # 15. LOGWATCH
+    # ============================================
+    - name: Configurar logwatch semanal
+      copy:
+        dest: /etc/cron.weekly/00logwatch
+        content: |
+          #!/bin/bash
+          /usr/sbin/logwatch --output mail --mailto root --detail low
+        mode: '0755'
+    
+    # ============================================
+    # 16. RELATÓRIO FINAL
+    # ============================================
+    - name: Gerar relatório de hardening
+      shell: |
+        cat > /root/hardening-report.txt <<EOF
+        ================================================
+        RELATÓRIO DE HARDENING - VPS LITE
+        Data: $(date)
+        Hostname: $(hostname)
+        ================================================
+        
+        SISTEMA:
+        - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+        - RAM: {{ ansible_memtotal_mb }}MB
+        - Disco livre: {{ ansible_mounts[0].size_available | human_readable }}
+        
+        SERVIÇOS DE SEGURANÇA:
+        - UFW: $(ufw status | grep Status)
+        - fail2ban: $(systemctl is-active fail2ban)
+        - AppArmor: $(systemctl is-active apparmor)
+        - Chrony: $(systemctl is-active chrony)
+        - Docker: $(systemctl is-active docker)
+        
+        CONFIGURAÇÃO SSH:
+        - Porta: {{ ssh_port }}
+        - Senha: {{ 'HABILITADA' if ssh_password_auth else 'DESABILITADA' }}
+        - Root login: Apenas com chave SSH
+        - MaxAuthTries: {{ ssh_max_auth_tries }}
+        - fail2ban: Bane após {{ f2b_maxretry }} tentativas
+        
+        ================================================
+        PRÓXIMOS PASSOS:
+        ================================================
+        
+        1. Defina senha para usuário {{ docker_user }}:
+           passwd {{ docker_user }}
+        
+        2. TESTE SSH em outra janela:
+           ssh {{ docker_user }}@seu-servidor
+        
+        3. Reinicie o servidor:
+           reboot
+        
+        4. Monitore logs:
+           tail -f /var/log/auth.log
+           fail2ban-client status sshd
+        
+        ================================================
+        AVISOS:
+        - Senha habilitada (use senha FORTE)
+        - fail2ban protegendo contra brute-force
+        - Monitore /var/log/auth.log regularmente
+        ================================================
+        EOF
+        cat /root/hardening-report.txt
+      changed_when: false
+    
+    - name: Exibir resumo final
+      debug:
+        msg:
+          - "=========================================="
+          - "HARDENING CONCLUÍDO COM SUCESSO!"
+          - "=========================================="
+          - ""
+          - "Sistema: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "RAM: {{ ansible_memtotal_mb }}MB"
+          - "SSH: Porta {{ ssh_port }} (senha {{ 'habilitada' if ssh_password_auth else 'desabilitada' }})"
+          - ""
+          - "⚠️  AÇÕES NECESSÁRIAS:"
+          - "1. Defina senha: passwd {{ docker_user }}"
+          - "2. TESTE SSH antes de desconectar!"
+          - "3. Relatório: /root/hardening-report.txt"
+          - ""
+          - "=========================================="
+
+  # ============================================
+  # HANDLERS
+  # ============================================
+  handlers:
+    - name: restart chrony
+      systemd:
+        name: chrony
+        state: restarted
+    
+    - name: restart docker
+      systemd:
+        name: docker
+        state: restarted
+        daemon_reload: yes
+    
+    - name: reload ssh
+      systemd:
+        name: ssh
+        state: reloaded
+    
+    - name: restart fail2ban
+      systemd:
+        name: fail2ban
+        state: restarted
