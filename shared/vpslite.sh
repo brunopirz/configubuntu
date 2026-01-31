@@ -218,9 +218,12 @@ log "Configurando usuário docker..."
 if ! id docker &>/dev/null; then
   adduser --disabled-password --gecos "" docker
   ok "Usuário docker criado"
+else
+  ok "Usuário docker já existe"
 fi
 
-usermod -aG docker docker
+# Adicionar ao grupo docker (ignora se já estiver)
+usermod -aG docker docker 2>/dev/null || true
 
 # Setup SSH directory
 mkdir -p /home/docker/.ssh
