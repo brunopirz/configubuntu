@@ -1,0 +1,83 @@
+---
+- name: Hardening Ubuntu 22.04+ | Produção Dedicada
+  hosts: all
+  become: true
+
+  vars:
+    cis_level: 2
+    environment: production
+    enable_kernel_hardening: true
+    enable_docker_hardening: true
+
+  tasks:
+    - name: Atualizar pacotes
+      apt:
+        update_cache: yes
+        upgrade: dist
+
+    - name: Instalar pacotes avançados de segurança
+      apt:
+        name:
+          - ufw
+          - fail2ban
+          - unattended-upgrades
+          - auditd
+          - lynis
+        state: present
+
+    - name: Configurar UFW restritivo
+      ufw:
+        state: enabled
+        policy: deny
+
+    - name: Permitir portas essenciais
+      ufw:
+        rule: allow
+        port: '{{ item }}'
+      loop:
+        - 22
+        - 80
+        - 443
+
+    - name: SSH hardening avançado
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^{{ item.key }}'
+        line: '{{ item.key }} {{ item.value }}'
+      loop:
+        - { key: 'PermitRootLogin', value: 'no' }
+        - { key: 'PasswordAuthentication', value: 'no' }
+        - { key: 'MaxAuthTries', value: '3' }
+        - { key: 'ClientAliveInterval', value: '300' }
+        - { key: 'ClientAliveCountMax', value: '2' }
+
+    - name: Kernel hardening
+      sysctl:
+        name: '{{ item.key }}'
+        value: '{{ item.value }}'
+        state: present
+      loop:
+        - { key: 'kernel.randomize_va_space', value: '2' }
+        - { key: 'fs.protected_hardlinks', value: '1' }
+        - { key: 'fs.protected_symlinks', value: '1' }
+
+    - name: Docker hardening
+      copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "log-driver": "json-file",
+            "userns-remap": "default",
+            "no-new-privileges": true
+          }
+
+    - name: Reiniciar serviços críticos
+      service:
+        name: '{{ item }}'
+        state: restarted
+      loop:
+        - ssh
+        - docker
+
+    - name: Auditoria ativa
+      command: lynis audit system
