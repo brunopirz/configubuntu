@@ -15,7 +15,7 @@ Uma ferramenta de configuração pós-instalação para servidores Ubuntu, simpl
 
 - Ubuntu Server (24.04)
 - Acesso root ou sudo
-- Conhecimentos básicos de linha de comando
+- Conhecimentos avançados de Kernel
 
 ## 💡 Uso
 
