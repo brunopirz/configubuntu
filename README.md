@@ -19,10 +19,15 @@ Uma ferramenta de configuração pós-instalação para servidores Ubuntu, simpl
 
 ## 💡 Uso
 
-Execute o script de configuração no seu servidor:
+Execute o script de configuração no seu servidor para bloquear sudo e criar usuário docker sem privilégios:
 
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/brunopirz/configubuntu/refs/heads/main/boot.sh)
+```
+ou para permitir sudo em usuário docker 
+
+```bash
+bash <(curl -sSL https://raw.githubusercontent.com/brunopirz/configubuntu/refs/heads/main/shared/vps-hardening-revised.sh)
 ```
 Após a instalação a conexão será feita com o usuário: docker
 
