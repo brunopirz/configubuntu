@@ -307,14 +307,18 @@ fi
 if ! id docker &>/dev/null 2>&1; then
   log "Criando usuário docker..."
   
-  # Criar usuário com seu próprio grupo primário
-  if useradd -m -s /bin/bash docker; then
-    ok "Usuário docker criado"
+  # Criar grupo 'dockeruser' como grupo primário para evitar conflito
+  # O grupo 'docker' (do Docker) será secundário
+  groupadd -f dockeruser
+  
+  # Criar usuário com grupo primário 'dockeruser'
+  if useradd -m -s /bin/bash -g dockeruser docker; then
+    ok "Usuário docker criado (grupo primário: dockeruser)"
   else
     die "Falha ao criar usuário docker"
   fi
   
-  # Adicionar aos grupos necessários
+  # Adicionar aos grupos necessários (docker do Docker + sudo)
   if usermod -aG docker,sudo docker; then
     ok "Usuário docker adicionado aos grupos: docker, sudo"
   else
@@ -327,9 +331,9 @@ fi
 # Verificar configuração final
 DOCKER_GROUPS=$(groups docker 2>/dev/null | cut -d: -f2 || echo "erro")
 if [[ "$DOCKER_GROUPS" == *"docker"* ]] && [[ "$DOCKER_GROUPS" == *"sudo"* ]]; then
-  ok "Grupos do usuário docker confirmados: $DOCKER_GROUPS"
+  ok "Grupos do usuário docker confirmados:$DOCKER_GROUPS"
 else
-  warn "Aviso: Grupos podem não estar corretos: $DOCKER_GROUPS"
+  warn "Aviso: Grupos podem não estar corretos:$DOCKER_GROUPS"
 fi
 
 # =========================
