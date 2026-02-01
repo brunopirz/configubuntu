@@ -37,14 +37,14 @@ ssh root@seu-servidor
 ### Passo 2: Baixar o script
 
 ```bash
-wget https://raw.githubusercontent.com/brunopirz/SEU-REPO/main/vps-hardening-final.sh
+wget https://raw.githubusercontent.com/brunopirz/configubuntu/main/shared/vpslite.sh
 ```
 
 ### Passo 3: Dar permissão e executar
 
 ```bash
-chmod +x vps-hardening-final.sh
-./vps-hardening-final.sh
+chmod +x vpslite.sh
+./vpslite.sh
 ```
 
 ### Passo 4: Durante a instalação
