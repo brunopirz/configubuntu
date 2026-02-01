@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# VPS Hardening Script - Versão Lite Híbrida
+# VPS Hardening Script - Versão Final Corrigida
 # Para Ubuntu 22.04+ | VPS Compartilhada (2 vCPU / 4GB RAM)
 # Segurança robusta + Performance + Suporte a senha
 
@@ -36,7 +36,7 @@ trap 'die "Erro na linha $LINENO"' ERR
 clear
 cat << "EOF"
 ╔═══════════════════════════════════════════════╗
-║   VPS Hardening - Versão Lite Híbrida        ║
+║   VPS Hardening - Versão Final Corrigida     ║
 ║   Segurança + Performance + Flexibilidade     ║
 ╚═══════════════════════════════════════════════╝
 EOF
@@ -212,29 +212,34 @@ else
 fi
 
 # =========================
-# Usuário docker
+# Usuário docker - CORRIGIDO
 # =========================
 log "Configurando usuário docker..."
 
-# Desabilitar exit on error temporariamente
+# Desabilitar exit on error temporariamente para esta seção
 set +e
 
-if ! id docker &>/dev/null; then
-  # Tentar criar usuário
-  adduser --disabled-password --gecos "" docker >/dev/null 2>&1
+if ! id docker &>/dev/null 2>&1; then
+  # Usar useradd ao invés de adduser para evitar conflito com grupo
+  useradd -m -s /bin/bash -g docker docker 2>/dev/null
   
-  # Verificar se foi criado
-  if id docker &>/dev/null; then
+  if id docker &>/dev/null 2>&1; then
     ok "Usuário docker criado"
   else
-    die "Falha ao criar usuário docker"
+    # Se falhar, tentar criar o grupo primeiro
+    groupadd -f docker 2>/dev/null
+    useradd -m -s /bin/bash -g docker docker 2>/dev/null
+    
+    if id docker &>/dev/null 2>&1; then
+      ok "Usuário docker criado"
+    else
+      set -e
+      die "Falha ao criar usuário docker"
+    fi
   fi
 else
   ok "Usuário docker já existe"
 fi
-
-# Adicionar ao grupo docker
-usermod -aG docker docker 2>/dev/null
 
 # Reabilitar exit on error
 set -e
@@ -496,7 +501,7 @@ SISTEMA:
 - OS: Ubuntu $UBUNTU_VERSION
 - RAM: ${RAM}MB
 - Disco livre: ${DISK}GB
-- Docker: $(docker --version)
+- Docker: $(docker --version 2>/dev/null || echo "Não instalado")
 
 SERVIÇOS DE SEGURANÇA:
 - UFW: $(ufw status | grep Status | awk '{print $2}')
@@ -608,6 +613,13 @@ echo ""
 echo -e "${BLUE}1. Defina senha para usuário docker:${NC}"
 echo -e "   ${GREEN}passwd docker${NC}"
 echo ""
-echo -e "${BLUE}2. TESTE SSH em outra janela ANTES de desconectar!${NC}"
+echo -e "${BLUE}2. ABRA OUTRA JANELA/TERMINAL SSH e teste ANTES de desconectar:${NC}"
+echo -e "   ${GREEN}ssh docker@$(hostname -I | awk '{print $1}')${NC}"
+echo ""
+echo -e "${BLUE}3. Se conseguir logar na outra janela, volte aqui e reinicie:${NC}"
+echo -e "   ${GREEN}reboot${NC}"
 echo ""
 echo -e "${YELLOW}═══════════════════════════════════════════════${NC}"
+echo ""
+echo -e "${RED}⚠️  NÃO FECHE ESTA JANELA ATÉ TESTAR SSH NA OUTRA!${NC}"
+echo ""
