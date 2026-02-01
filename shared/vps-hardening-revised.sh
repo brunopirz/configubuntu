@@ -288,51 +288,66 @@ fi
 # =========================
 # Usuário docker com sudo SEM senha
 # =========================
+# Usuário docker
+# =========================
 log "Configurando usuário docker..."
 
-# Criar grupo docker se não existir
-groupadd -f docker
-
-# Desabilitar exit on error temporariamente
-set +e
-
-if ! id docker &>/dev/null 2>&1; then
-  useradd -m -s /bin/bash -G docker,sudo docker 2>/dev/null
-  
-  if id docker &>/dev/null 2>&1; then
-    ok "Usuário docker criado"
-  else
-    usermod -aG docker,sudo docker 2>/dev/null || true
-    if id docker &>/dev/null 2>&1; then
-      ok "Usuário docker criado"
-    else
-      set -e
-      die "Falha ao criar usuário docker"
-    fi
-  fi
-else
-  # Garantir que está nos grupos corretos
-  usermod -aG docker,sudo docker
-  ok "Usuário docker já existe - grupos atualizados"
+# Verificar se usuário docker já existe
+if id docker &>/dev/null 2>&1; then
+  log "Usuário docker já existe, configurando grupos..."
+  usermod -aG docker,sudo docker || {
+    warn "Aviso: Não foi possível adicionar aos grupos, tentando alternativa..."
+    # Remover e recriar se houver problema
+    userdel -r docker 2>/dev/null || true
+    sleep 1
+  }
 fi
 
-set -e
+# Se ainda não existe, criar
+if ! id docker &>/dev/null 2>&1; then
+  log "Criando usuário docker..."
+  
+  # Criar usuário com seu próprio grupo primário
+  if useradd -m -s /bin/bash docker; then
+    ok "Usuário docker criado"
+  else
+    die "Falha ao criar usuário docker"
+  fi
+  
+  # Adicionar aos grupos necessários
+  if usermod -aG docker,sudo docker; then
+    ok "Usuário docker adicionado aos grupos: docker, sudo"
+  else
+    die "Falha ao adicionar usuário aos grupos"
+  fi
+else
+  ok "Usuário docker configurado nos grupos: docker, sudo"
+fi
+
+# Verificar configuração final
+DOCKER_GROUPS=$(groups docker 2>/dev/null | cut -d: -f2 || echo "erro")
+if [[ "$DOCKER_GROUPS" == *"docker"* ]] && [[ "$DOCKER_GROUPS" == *"sudo"* ]]; then
+  ok "Grupos do usuário docker confirmados: $DOCKER_GROUPS"
+else
+  warn "Aviso: Grupos podem não estar corretos: $DOCKER_GROUPS"
+fi
 
 # =========================
-# Configurar usuário docker no grupo sudo (COM senha)
+# Configuração de sudo (COM senha)
 # =========================
-log "Adicionando usuário docker ao grupo sudo (com senha)..."
+# Usuário docker está no grupo 'sudo', que por padrão requer senha
+# Não é necessário criar arquivo em /etc/sudoers.d/
+# O comportamento padrão do Ubuntu já é adequado
+log "Configuração de sudo: usuário docker requer senha (padrão do grupo sudo)"
 
-# Garante que docker está no grupo sudo
-usermod -aG sudo docker
-
-# Remove arquivo NOPASSWD se existir (de versões antigas)
-rm -f /etc/sudoers.d/docker
-
-ok "Usuário docker configurado com sudo (REQUER senha)"
+# Remover arquivo NOPASSWD se existir (de versões antigas do script)
+if [ -f /etc/sudoers.d/docker ]; then
+  rm -f /etc/sudoers.d/docker
+  ok "Arquivo /etc/sudoers.d/docker removido (não necessário)"
+fi
 
 # =========================
-# Setup SSH directory
+# Setup SSH directory para usuário docker
 # =========================
 mkdir -p /home/docker/.ssh
 chmod 700 /home/docker/.ssh
